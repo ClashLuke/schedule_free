@@ -162,6 +162,13 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                 # Normalize grad in-place for memory efficiency
                 torch._foreach_div_(grad, denom)
 
+                # StableAdamW
+                rms = torch._foreach_pow(grad, 2)
+                rms = [r.mean() for r in rms]
+                torch._foreach_sqrt_(rms)
+                torch._foreach_maximum_(rms, 1.0)
+                torch._foreach_div_(grad, rms)
+
                 # Weight decay calculated at y
                 if decay != 0:
                     torch._foreach_add_(grad, y, alpha=decay)
@@ -174,32 +181,7 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                 # z step
                 torch._foreach_sub_(z, grad, alpha=lr)
             else:
-                for p in active_p:
-                    y = p.data # Notation to match theory
-                    grad = p.grad.data
-
-                    state = self.state[p]
-
-                    z = state['z']
-                    exp_avg_sq = state['exp_avg_sq']
-
-                    exp_avg_sq.mul_(beta2).addcmul_(grad, grad, value=1-beta2)
-                    denom = exp_avg_sq.sqrt().add_(eps)
-
-                    # Reuse grad buffer for memory efficiency
-                    grad_normalized = grad.div_(denom)
-
-                    # Weight decay calculated at y
-                    if decay != 0:
-                        grad_normalized.add_(y, alpha=decay)
-
-                    # These operations update y in-place,
-                    # without computing x explicitly.
-                    y.lerp_(end=z, weight=ckp1)
-                    y.add_(grad_normalized, alpha=lr*(beta1*(1-ckp1)-1))
-
-                    # z step
-                    z.sub_(grad_normalized, alpha=lr)
+                raise NotImplementedError("Upgrade PyTorch")
 
             group['k'] = k+1
         return loss

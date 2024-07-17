@@ -65,7 +65,8 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                  weight_lr_power: float = 2.0,
                  foreach: Optional[bool] = hasattr(torch, "_foreach_mul_"),
                  clipped: bool = True,
-                 root_free_method: RootFreeMethod = RootFreeMethod.grafted
+                 root_free_method: RootFreeMethod = RootFreeMethod.grafted,
+                 batch_size: int = -1,
                  ):
 
         defaults = dict(lr=lr, 
@@ -81,7 +82,8 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                         weight_decay=weight_decay,
                         foreach=foreach,
                         clipped=clipped,
-                        root_free_method=root_free_method)
+                        root_free_method=root_free_method,
+                        batch_size=batch_size)
         super().__init__(params, defaults)
     
     def eval(self):
@@ -183,6 +185,8 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                 if group['root_free_method'] == RootFreeMethod.default:
                     pass
                 elif group['root_free_method'] == RootFreeMethod.root_free:
+                    assert group['batch_size'] > 0
+                    torch._foreach_mul_(denom, group['batch_size'])
                     torch._foreach_div_(grad, denom)
                 elif group['root_free_method'] == RootFreeMethod.grafted:
                     default_norm = [g.norm() for g in grad]

@@ -12,6 +12,13 @@ try:
 except ImportError:
     ParamsT : TypeAlias = Union[Iterable[torch.Tensor], Iterable[Dict[str, Any]]]
 import math
+import enum
+
+class RootFreeMethod(enum.Enum):
+    default: str = "default"
+    root_free: str = "root_free"
+    grafted: str = "grafted"
+
 
 class AdamWScheduleFree(torch.optim.Optimizer):
     r"""
@@ -56,7 +63,9 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                  warmup_steps: int = 0,
                  r: float = 0.0,
                  weight_lr_power: float = 2.0,
-                 foreach: Optional[bool] = hasattr(torch, "_foreach_mul_")
+                 foreach: Optional[bool] = hasattr(torch, "_foreach_mul_"),
+                 clipped: bool = True,
+                 root_free_method: RootFreeMethod = RootFreeMethod.grafted
                  ):
 
         defaults = dict(lr=lr, 
@@ -70,7 +79,9 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                         lr_max=-1.0,
                         weight_lr_power=weight_lr_power,
                         weight_decay=weight_decay,
-                        foreach=foreach)
+                        foreach=foreach,
+                        clipped=clipped,
+                        root_free_method=root_free_method)
         super().__init__(params, defaults)
     
     def eval(self):
@@ -162,13 +173,24 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                 # Normalize grad in-place for memory efficiency
                 torch._foreach_div_(grad, denom)
 
-                # StableAdamW
-                rms = torch._foreach_pow(grad, 2)
-                rms = [r.mean() for r in rms]
-                torch._foreach_sqrt_(rms)
-                torch._foreach_maximum_(rms, 1.0)
-                torch._foreach_div_(grad, rms)
-
+                if group['clipped']:  # StableAdamW                    
+                    rms = torch._foreach_pow(grad, 2)
+                    rms = [r.mean() for r in rms]
+                    torch._foreach_sqrt_(rms)
+                    torch._foreach_maximum_(rms, 1.0)
+                    torch._foreach_div_(grad, rms)
+                
+                if group['root_free_method'] == RootFreeMethod.default:
+                    pass
+                elif group['root_free_method'] == RootFreeMethod.root_free:
+                    torch._foreach_div_(grad, denom)
+                elif group['root_free_method'] == RootFreeMethod.grafted:
+                    default_norm = [g.norm() for g in grad]
+                    torch._foreach_div_(grad, denom)
+                    rootfree_norm = [g.norm() for g in grad]
+                    torch._foreach_div_(default_norm, rootfree_norm)
+                    torch._foreach_mul_(grad, default_norm)
+            
                 # Weight decay calculated at y
                 if decay != 0:
                     torch._foreach_add_(grad, y, alpha=decay)

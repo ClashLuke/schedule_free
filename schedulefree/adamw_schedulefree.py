@@ -192,6 +192,7 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                     default_norm = [g.norm() for g in grad]
                     torch._foreach_div_(grad, denom)
                     rootfree_norm = [g.norm() for g in grad]
+                    torch._foreach_maximum_(rootfree_norm, eps)
                     torch._foreach_div_(default_norm, rootfree_norm)
                     torch._foreach_mul_(grad, default_norm)
             

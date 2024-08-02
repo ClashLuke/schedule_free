@@ -67,6 +67,7 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                  clipped: bool = True,
                  root_free_method: RootFreeMethod = RootFreeMethod.grafted,
                  batch_size: int = -1,
+                 standard_debias: bool = True
                  ):
 
         defaults = dict(lr=lr, 
@@ -83,7 +84,8 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                         foreach=foreach,
                         clipped=clipped,
                         root_free_method=root_free_method,
-                        batch_size=batch_size)
+                        batch_size=batch_size,
+                        standard_debias=standard_debias)
         super().__init__(params, defaults)
     
     def eval(self):
@@ -137,7 +139,9 @@ class AdamWScheduleFree(torch.optim.Optimizer):
               sched = 1.0
             
             bias_correction2 = 1 - beta2 ** (k+1)
-            lr = group['lr']*sched*math.sqrt(bias_correction2)
+            lr = group['lr'] * sched
+            if not group['standard_debias']:
+                lr *= math.sqrt(bias_correction2)
             
             lr_max = group['lr_max'] = max(lr, group['lr_max'])
             
@@ -169,7 +173,12 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                 # Decay the first and second moment running average coefficient
                 torch._foreach_mul_(exp_avg_sq, beta2)
                 torch._foreach_addcmul_(exp_avg_sq, grad, grad, value=1-beta2)
-                denom = torch._foreach_sqrt(exp_avg_sq)
+                if group['standard_debias']:
+                    denom = torch._foreach_div(exp_avg_sq, bias_correction2)
+                    torch._foreach_sqrt_(denom)
+                else:
+                    denom = torch._foreach_sqrt(exp_avg_sq)
+                    
                 torch._foreach_add_(denom, eps)
 
                 # Normalize grad in-place for memory efficiency

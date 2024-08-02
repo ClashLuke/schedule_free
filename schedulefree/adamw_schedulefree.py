@@ -20,6 +20,12 @@ class RootFreeMethod(enum.Enum):
     grafted: str = "grafted"
 
 
+class DivisionMethod(enum.Enum):
+    drop_nan: str = "drop_nan"
+    atan2: str = "atan2"
+    eps: str = "eps"
+
+
 class AdamWScheduleFree(torch.optim.Optimizer):
     r"""
     Schedule-Free AdamW
@@ -67,7 +73,8 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                  clipped: bool = True,
                  root_free_method: RootFreeMethod = RootFreeMethod.grafted,
                  batch_size: int = -1,
-                 standard_debias: bool = True
+                 standard_debias: bool = True,
+                 division_method: DivisionMethod = DivisionMethod.eps,
                  ):
 
         defaults = dict(lr=lr, 
@@ -85,7 +92,8 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                         clipped=clipped,
                         root_free_method=root_free_method,
                         batch_size=batch_size,
-                        standard_debias=standard_debias)
+                        standard_debias=standard_debias,
+                        division_method=division_method)
         super().__init__(params, defaults)
     
     def eval(self):
@@ -178,11 +186,17 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                     torch._foreach_sqrt_(denom)
                 else:
                     denom = torch._foreach_sqrt(exp_avg_sq)
-                    
-                torch._foreach_add_(denom, eps)
 
-                # Normalize grad in-place for memory efficiency
-                torch._foreach_div_(grad, denom)
+                if group['division_method'] == DivisionMethod.eps:
+                    torch._foreach_add_(denom, eps)
+                    torch._foreach_div_(grad, denom)
+                elif group['division_method'] == DivisionMethod.atan2:
+                    grad = [torch.atan2(g, d) for g, d in zip(grad, denom)]
+                elif group['division_method'] == DivisionMethod.drop_nan:
+                    torch._foreach_div_(grad, denom)
+                    grad = [torch.where(torch.isfinite(g), g, 0) for g in grad]
+                else:
+                    raise ValueError("unknown division method")
 
                 if group['clipped']:  # StableAdamW                    
                     rms = torch._foreach_pow(grad, 2)
@@ -202,7 +216,7 @@ class AdamWScheduleFree(torch.optim.Optimizer):
                     torch._foreach_div_(grad, denom)
                     rootfree_norm = [g.norm() for g in grad]
                     torch._foreach_maximum_(rootfree_norm, eps)
-                    torch._foreach_div_(default_norm, rootfree_norm)
+                    torch._foreach_div_(default_norm, rootfree_norm)  # atan2 would be troublesome due to clipping
                     torch._foreach_mul_(grad, default_norm)
             
                 # Weight decay calculated at y
